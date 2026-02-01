@@ -25,10 +25,21 @@ jobs:
         run: git remote add upstream https://github.com/openclaw/openclaw.git
 
       - name: Fetch upstream
-        run: git fetch upstream
+        id: fetch
+        continue-on-error: true
+        run: |
+          if git fetch upstream 2>&1; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "⚠️ VAROVÁNÍ: Upstream repozitář není dostupný!"
+            echo "Možná byl smazán nebo přejmenován."
+            echo "Tvůj fork je v bezpečí a obsahuje všechna dosavadní data."
+          fi
 
       - name: Check for new commits
         id: check
+        if: steps.fetch.outputs.status == 'success'
         run: |
           UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count 2>/dev/null || git rev-list HEAD..upstream/master --count 2>/dev/null || echo "0")
           echo "new_commits=$UPSTREAM_COMMITS" >> $GITHUB_OUTPUT
@@ -39,12 +50,17 @@ jobs:
           fi
 
       - name: Merge upstream changes
-        if: steps.check.outputs.new_commits > 0
+        if: steps.fetch.outputs.status == 'success' && steps.check.outputs.new_commits > 0
         run: |
           # Zkusí main, pokud neexistuje, použije master
           git merge upstream/main --no-edit || git merge upstream/master --no-edit
 
       - name: Push changes
-        if: steps.check.outputs.new_commits > 0
+        if: steps.fetch.outputs.status == 'success' && steps.check.outputs.new_commits > 0
         run: git push origin main || git push origin master
+
+      - name: Report upstream unavailable
+        if: steps.fetch.outputs.status == 'failed'
+        run: |
+          echo "::warning::Upstream repozitář openclaw/openclaw není dostupný. Fork zůstává nezměněn."
 
