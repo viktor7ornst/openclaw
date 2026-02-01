@@ -1,0 +1,50 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Každý den v 6:00 UTC (7:00 nebo 8:00 CET/CEST)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Umožňuje ruční spuštění
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/openclaw/openclaw.git
+
+      - name: Fetch upstream
+        run: git fetch upstream
+
+      - name: Check for new commits
+        id: check
+        run: |
+          UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count 2>/dev/null || git rev-list HEAD..upstream/master --count 2>/dev/null || echo "0")
+          echo "new_commits=$UPSTREAM_COMMITS" >> $GITHUB_OUTPUT
+          if [ "$UPSTREAM_COMMITS" -gt "0" ]; then
+            echo "📦 Found $UPSTREAM_COMMITS new commits from upstream"
+          else
+            echo "✅ Already up to date"
+          fi
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.new_commits > 0
+        run: |
+          # Zkusí main, pokud neexistuje, použije master
+          git merge upstream/main --no-edit || git merge upstream/master --no-edit
+
+      - name: Push changes
+        if: steps.check.outputs.new_commits > 0
+        run: git push origin main || git push origin master
+
