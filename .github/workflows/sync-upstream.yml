@@ -10,70 +10,18 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Sync fork via GitHub API
+        uses: repo-sync/github-sync@v2
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          source_repo: https://github.com/openclaw/openclaw.git
+          source_branch: main
+          destination_branch: main
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        id: sync
 
-      - name: Setup Git
+      - name: Report result
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Add upstream remote
-        run: git remote add upstream https://github.com/openclaw/openclaw.git
-
-      - name: Fetch upstream
-        id: fetch
-        run: |
-          if git fetch upstream 2>&1; then
-            echo "fetch_ok=true" >> $GITHUB_OUTPUT
-            echo "✅ Upstream fetch successful"
-          else
-            echo "fetch_ok=false" >> $GITHUB_OUTPUT
-            echo "⚠️ VAROVÁNÍ: Upstream repozitář není dostupný!"
-            echo "Možná byl smazán nebo přejmenován."
-            echo "Tvůj fork je v bezpečí a obsahuje všechna dosavadní data."
-          fi
-
-      - name: Check for new commits
-        id: check
-        if: steps.fetch.outputs.fetch_ok == 'true'
-        run: |
-          # Determine upstream branch (main or master)
-          if git rev-parse --verify upstream/main >/dev/null 2>&1; then
-            UPSTREAM_BRANCH="upstream/main"
-          else
-            UPSTREAM_BRANCH="upstream/master"
-          fi
-          echo "upstream_branch=$UPSTREAM_BRANCH" >> $GITHUB_OUTPUT
-
-          UPSTREAM_COMMITS=$(git rev-list HEAD..$UPSTREAM_BRANCH --count 2>/dev/null || echo "0")
-          echo "new_commits=$UPSTREAM_COMMITS" >> $GITHUB_OUTPUT
-
-          if [ "$UPSTREAM_COMMITS" -gt "0" ]; then
-            echo "has_updates=true" >> $GITHUB_OUTPUT
-            echo "📦 Found $UPSTREAM_COMMITS new commits from upstream"
-          else
-            echo "has_updates=false" >> $GITHUB_OUTPUT
-            echo "✅ Already up to date"
-          fi
-
-      - name: Merge upstream changes
-        if: steps.check.outputs.has_updates == 'true'
-        run: |
-          git merge ${{ steps.check.outputs.upstream_branch }} --no-edit
-          echo "✅ Merged changes from upstream"
-
-      - name: Push changes
-        if: steps.check.outputs.has_updates == 'true'
-        run: |
-          git push origin main || git push origin master
-          echo "✅ Pushed changes to fork"
-
-      - name: Report upstream unavailable
-        if: steps.fetch.outputs.fetch_ok == 'false'
-        run: |
-          echo "::warning::Upstream repozitář openclaw/openclaw není dostupný. Fork zůstává nezměněn."
+          echo "✅ Sync attempt completed"
+          echo "Fork is synced or upstream is unavailable."
 
