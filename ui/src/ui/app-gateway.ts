@@ -25,7 +25,9 @@ import {
   removeExecApproval,
 } from "./controllers/exec-approval.ts";
 import { loadNodes } from "./controllers/nodes.ts";
+import { loadPresence } from "./controllers/presence.ts";
 import { loadSessions } from "./controllers/sessions.ts";
+import { loadDebug } from "./controllers/debug.ts";
 import { GatewayBrowserClient } from "./gateway.ts";
 
 type GatewayHost = {
@@ -122,6 +124,29 @@ export function connectGateway(host: GatewayHost) {
   host.execApprovalQueue = [];
   host.execApprovalError = null;
 
+  let gapRecoveryInFlight = false;
+  const recoverFromEventGap = async () => {
+    if (gapRecoveryInFlight) {
+      return;
+    }
+    gapRecoveryInFlight = true;
+    host.lastError = "event gap detected; refreshing state...";
+    try {
+      await Promise.all([
+        loadPresence(host as unknown as OpenClawApp),
+        loadDebug(host as unknown as OpenClawApp),
+      ]);
+      await refreshActiveTab(host as unknown as Parameters<typeof refreshActiveTab>[0]);
+      if (host.connected && host.lastError?.startsWith("event gap detected")) {
+        host.lastError = null;
+      }
+    } catch (err) {
+      host.lastError = `event gap recovery failed: ${String(err)}`;
+    } finally {
+      gapRecoveryInFlight = false;
+    }
+  };
+
   host.client?.stop();
   host.client = new GatewayBrowserClient({
     url: host.settings.gatewayUrl,
@@ -155,7 +180,8 @@ export function connectGateway(host: GatewayHost) {
     },
     onEvent: (evt) => handleGatewayEvent(host, evt),
     onGap: ({ expected, received }) => {
-      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); refresh recommended`;
+      host.lastError = `event gap detected (expected seq ${expected}, got ${received}); starting recovery`;
+      void recoverFromEventGap();
     },
   });
   host.client.start();

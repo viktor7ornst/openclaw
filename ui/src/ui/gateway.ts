@@ -70,6 +70,8 @@ export class GatewayBrowserClient {
   private connectNonce: string | null = null;
   private connectSent = false;
   private connectTimer: number | null = null;
+  private keepaliveTimer: number | null = null;
+  private keepalivePending = false;
   private backoffMs = 800;
 
   constructor(private opts: GatewayBrowserClientOptions) {}
@@ -81,6 +83,7 @@ export class GatewayBrowserClient {
 
   stop() {
     this.closed = true;
+    this.stopKeepalive();
     this.ws?.close();
     this.ws = null;
     this.flushPending(new Error("gateway client stopped"));
@@ -99,6 +102,7 @@ export class GatewayBrowserClient {
     this.ws.addEventListener("message", (ev) => this.handleMessage(String(ev.data ?? "")));
     this.ws.addEventListener("close", (ev) => {
       const reason = String(ev.reason ?? "");
+      this.stopKeepalive();
       this.ws = null;
       this.flushPending(new Error(`gateway closed (${ev.code}): ${reason}`));
       this.opts.onClose?.({ code: ev.code, reason });
@@ -123,6 +127,32 @@ export class GatewayBrowserClient {
       p.reject(err);
     }
     this.pending.clear();
+  }
+
+  private stopKeepalive() {
+    if (this.keepaliveTimer !== null) {
+      window.clearInterval(this.keepaliveTimer);
+      this.keepaliveTimer = null;
+    }
+    this.keepalivePending = false;
+  }
+
+  private startKeepalive() {
+    this.stopKeepalive();
+    // Lightweight client-side keepalive to reduce idle WS drops behind middleboxes.
+    this.keepaliveTimer = window.setInterval(() => {
+      if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.keepalivePending) {
+        return;
+      }
+      this.keepalivePending = true;
+      void this.request("status", {})
+        .catch(() => {
+          // Ignore transient keepalive failures; reconnect flow handles hard disconnects.
+        })
+        .finally(() => {
+          this.keepalivePending = false;
+        });
+    }, 20_000);
   }
 
   private async sendConnect() {
@@ -225,6 +255,7 @@ export class GatewayBrowserClient {
           });
         }
         this.backoffMs = 800;
+        this.startKeepalive();
         this.opts.onHello?.(hello);
       })
       .catch(() => {
