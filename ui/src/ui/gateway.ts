@@ -141,7 +141,12 @@ export class GatewayBrowserClient {
     this.stopKeepalive();
     // Lightweight client-side keepalive to reduce idle WS drops behind middleboxes.
     this.keepaliveTimer = window.setInterval(() => {
-      if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.keepalivePending) {
+      if (
+        this.closed ||
+        !this.ws ||
+        this.ws.readyState !== WebSocket.OPEN ||
+        this.keepalivePending
+      ) {
         return;
       }
       this.keepalivePending = true;
