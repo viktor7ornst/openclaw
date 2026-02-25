@@ -1,0 +1,51 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync main from upstream (safe mode)
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/openclaw/openclaw.git
+          git fetch origin main
+          git fetch upstream main
+
+          git checkout main
+          git reset --hard origin/main
+          before_sha="$(git rev-parse HEAD)"
+
+          git merge --no-edit upstream/main
+
+          # Keep fork-owned workflow files unchanged.
+          # This prevents push failures when upstream modifies workflow files.
+          git checkout origin/main -- .github/workflows || true
+
+          if git diff --quiet --exit-code; then
+            echo "Already up to date (or only workflow-file changes upstream)."
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "chore: sync fork main with upstream (skip workflow files)"
+          git push origin HEAD:main
+          after_sha="$(git rev-parse HEAD)"
+          echo "Fork synchronized: ${before_sha} -> ${after_sha}"
