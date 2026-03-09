@@ -5,6 +5,10 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -18,7 +22,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Sync main from upstream (safe mode)
+      - name: Sync main from upstream (conflict-free)
         run: |
           set -euo pipefail
 
@@ -29,15 +33,20 @@ jobs:
           git fetch origin main
           git fetch upstream main
 
-          git checkout main
-          git reset --hard origin/main
-          before_sha="$(git rev-parse HEAD)"
+          before_sha="$(git rev-parse origin/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
 
-          git merge --no-edit upstream/main
-          merged_sha="$(git rev-parse HEAD)"
+          # Keep a backup branch only when we are about to rewrite divergent history.
+          if ! git merge-base --is-ancestor origin/main upstream/main; then
+            backup_ref="backup/pre-sync-$(date -u +%Y%m%d-%H%M%S)"
+            git push origin "origin/main:refs/heads/${backup_ref}" || true
+            echo "Created backup branch: ${backup_ref}"
+          fi
 
-          # Keep fork-owned workflow files unchanged.
-          # This prevents push failures when upstream modifies workflow files.
+          git checkout -B main upstream/main
+
+          # Preserve fork-owned workflow files from origin/main.
+          # This avoids merge conflicts when upstream changes workflows.
           git checkout origin/main -- .github/workflows || true
 
           if ! git diff --quiet --exit-code HEAD --; then
@@ -51,5 +60,5 @@ jobs:
             exit 0
           fi
 
-          git push origin HEAD:main
-          echo "Fork synchronized: ${before_sha} -> ${final_sha} (merged=${merged_sha})"
+          git push --force-with-lease=refs/heads/main origin HEAD:main
+          echo "Fork synchronized: ${before_sha} -> ${final_sha} (upstream=${upstream_sha})"
