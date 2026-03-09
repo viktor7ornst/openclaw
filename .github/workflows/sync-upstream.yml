@@ -48,6 +48,11 @@ jobs:
           # Preserve fork-owned workflow files from origin/main.
           # This avoids merge conflicts when upstream changes workflows.
           git checkout origin/main -- .github/workflows || true
+          # Drop workflow files that exist only in upstream/main; GitHub token
+          # cannot push newly introduced workflow files without workflows scope.
+          git ls-tree -r --name-only origin/main .github/workflows | sort > /tmp/origin-workflows.txt
+          git ls-tree -r --name-only HEAD .github/workflows | sort > /tmp/head-workflows.txt
+          comm -23 /tmp/head-workflows.txt /tmp/origin-workflows.txt | xargs -r git rm -f
 
           if ! git diff --quiet --exit-code HEAD --; then
             git add -A
