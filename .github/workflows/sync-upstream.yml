@@ -1,0 +1,69 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync main from upstream (conflict-free)
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/openclaw/openclaw.git
+          git fetch origin main
+          git fetch upstream main
+
+          before_sha="$(git rev-parse origin/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
+
+          # Keep a backup branch only when we are about to rewrite divergent history.
+          if ! git merge-base --is-ancestor origin/main upstream/main; then
+            backup_ref="backup/pre-sync-$(date -u +%Y%m%d-%H%M%S)"
+            git push origin "origin/main:refs/heads/${backup_ref}" || true
+            echo "Created backup branch: ${backup_ref}"
+          fi
+
+          git checkout -B main upstream/main
+
+          # Preserve fork-owned workflow files from origin/main.
+          # This avoids merge conflicts when upstream changes workflows.
+          git checkout origin/main -- .github/workflows || true
+          # Drop workflow files that exist only in upstream/main; GitHub token
+          # cannot push newly introduced workflow files without workflows scope.
+          git ls-tree -r --name-only origin/main .github/workflows | sort > /tmp/origin-workflows.txt
+          git ls-tree -r --name-only HEAD .github/workflows | sort > /tmp/head-workflows.txt
+          comm -23 /tmp/head-workflows.txt /tmp/origin-workflows.txt | xargs -r git rm -f
+
+          if ! git diff --quiet --exit-code HEAD --; then
+            git add -A
+            git commit -m "chore: sync fork main with upstream (skip workflow files)"
+          fi
+
+          final_sha="$(git rev-parse HEAD)"
+          if [ "${final_sha}" = "${before_sha}" ]; then
+            echo "Already up to date."
+            exit 0
+          fi
+
+          git push --force-with-lease=refs/heads/main origin HEAD:main
+          echo "Fork synchronized: ${before_sha} -> ${final_sha} (upstream=${upstream_sha})"
