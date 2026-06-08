@@ -1,0 +1,70 @@
+name: Sync Fork Mirror
+
+on:
+  schedule:
+    # Weekly budget guard; manual dispatch remains available for urgent upstream syncs.
+    - cron: "15 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_REPO: openclaw/openclaw
+  MIRROR_WORKFLOW: .github/workflows/sync-fork-mirror.yml
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout mirror
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          token: ${{ secrets.MIRROR_PUSH_TOKEN }}
+
+      - name: Sync main from upstream
+        shell: bash
+        env:
+          MIRROR_PUSH_TOKEN: ${{ secrets.MIRROR_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${MIRROR_PUSH_TOKEN}" ]]; then
+            echo "MIRROR_PUSH_TOKEN secret is required and must have repo + workflow scopes." >&2
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${MIRROR_PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git" 2>/dev/null || git remote set-url upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags --prune --depth=1 upstream +refs/heads/main:refs/remotes/upstream/main
+          git fetch --no-tags --prune --depth=2 origin +refs/heads/main:refs/remotes/origin/main
+
+          before="$(git rev-parse origin/main)"
+          upstream_sha="$(git rev-parse upstream/main)"
+          before_parent="$(git rev-parse "${before}^" 2>/dev/null || true)"
+
+          if [[ "${before_parent}" == "${upstream_sha}" ]] && git cat-file -e "${before}:${MIRROR_WORKFLOW}" 2>/dev/null; then
+            echo "Mirror already synchronized."
+            echo "before=${before}"
+            echo "upstream=${upstream_sha}"
+            exit 0
+          fi
+
+          git checkout -B main upstream/main
+          git checkout "${before}" -- "${MIRROR_WORKFLOW}"
+          git add "${MIRROR_WORKFLOW}"
+          git commit -m "chore: sync fork mirror workflow"
+          after="$(git rev-parse HEAD)"
+
+          git push --force-with-lease=main:"${before}" origin HEAD:main
+          echo "before=${before}"
+          echo "upstream=${upstream_sha}"
+          echo "after=${after}"
